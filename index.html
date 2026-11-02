@@ -110,6 +110,14 @@
   }
   .code-input:focus{outline:2px solid var(--gold);}
 
+  .name-input{
+    width:100%; max-width:320px; text-align:center; font:600 16px var(--font-body);
+    background:var(--panel-2); color:var(--cream); border:1px solid rgba(255,255,255,.18);
+    border-radius:14px; padding:14px 16px;
+  }
+  .name-input:focus{outline:2px solid var(--gold);}
+  .name-input::placeholder{color:var(--cream-dim);}
+
   /* ---- Game screen ---- */
   #screen-game{gap:6px;}
   #gameTopBar{
@@ -126,11 +134,21 @@
   #turnChip b{color:var(--gold);}
   .ball-tag{width:16px;height:16px;border-radius:50%;display:inline-block;margin-left:4px;vertical-align:-3px;border:1px solid rgba(0,0,0,.4);}
 
-  #tableWrap{
-    flex:1 1 auto; min-height:0; display:flex; align-items:center; justify-content:center;
-    position:relative;
+  #scoreBar{flex:0 0 auto; display:flex; gap:8px; padding:0 0 6px;}
+  .scoreSide{
+    flex:1 1 0; min-width:0; background:var(--panel-2); border:1px solid rgba(255,255,255,.1);
+    border-radius:10px; padding:6px 10px; display:flex; flex-direction:column; gap:1px;
+    transition:border-color .2s, background .2s;
   }
-  #tbl{touch-action:none; display:block; border-radius:10px;}
+  .scoreSide.active{border-color:var(--gold); background:rgba(214,173,78,.12);}
+  .scoreName{font:700 11.5px var(--font-body); color:var(--cream); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .scoreType{font:600 10.5px var(--font-body); color:var(--cream-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+
+  #tableWrap{
+    flex:1 1 auto; min-height:0; display:flex; align-items:stretch; justify-content:center;
+    gap:10px; position:relative;
+  }
+  #tbl{touch-action:none; display:block; border-radius:10px; align-self:center;}
 
   #toast{
     position:absolute; top:8px; left:50%; transform:translate(-50%,-6px);
@@ -141,24 +159,25 @@
   }
   #toast.show{opacity:1; transform:translate(-50%,0);}
 
-  #gameBottomBar{
-    flex:0 0 auto; display:flex; align-items:center; gap:14px; padding:8px 0 14px;
+  #leaveBtn{flex:0 0 auto; width:36px; height:36px; border-radius:50%; padding:0; font-size:14px;}
+
+  #powerBar{
+    flex:0 0 auto; width:34px; align-self:stretch; margin:8px 0; border-radius:17px;
+    position:relative; touch-action:none;
+    background:linear-gradient(180deg, var(--good), var(--gold) 55%, var(--danger));
+    border:2px solid var(--rail-dark); box-shadow:inset 0 2px 8px rgba(0,0,0,.45);
   }
-  #powerSlider{
-    width:46px; height:112px; border-radius:23px; background:var(--panel-2);
-    border:1px solid rgba(255,255,255,.14); position:relative; touch-action:none; flex:0 0 auto;
-  }
-  #powerFill{
-    position:absolute; left:3px; right:3px; bottom:3px; border-radius:20px;
-    background:linear-gradient(180deg, var(--danger), var(--gold) 55%, var(--good));
-    height:8%;
-  }
-  #powerLabel{
+  #powerBar.disabled{opacity:.4; pointer-events:none;}
+  #powerBarLabel{
     position:absolute; top:-18px; left:0; right:0; text-align:center; font:700 10px var(--font-body);
     color:var(--cream-dim);
   }
-  #shootBtn{flex:1 1 auto; height:58px; font-size:17px;}
-  #leaveBtn{flex:0 0 auto; width:48px; height:48px; border-radius:50%; padding:0; font-size:18px;}
+  #powerThumb{
+    position:absolute; left:50%; top:0; width:28px; height:28px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #fff, #d9d4c4 55%, #a79a78);
+    border:3px solid var(--gold); transform:translate(-50%,-50%);
+    box-shadow:0 2px 6px rgba(0,0,0,.5);
+  }
 
   #modalGameOver{
     position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
@@ -190,6 +209,7 @@
         <h1>MESA<br>COMPARTIDA</h1>
         <p class="sub">Jugá al pool con alguien que está en otra casa. Sin apps, sin registro: uno crea la sala, le pasa el código al otro.</p>
       </div>
+      <input class="name-input" id="nameInput" maxlength="16" placeholder="Tu nombre" autocomplete="off" spellcheck="false">
       <div class="stack">
         <button class="btn btn-primary" id="goCreate"><span class="ic">🎯</span>Crear sala</button>
         <button class="btn btn-secondary" id="goJoin"><span class="ic">🔗</span>Unirse a sala</button>
@@ -236,19 +256,25 @@
     <div id="gameTopBar">
       <div class="pill" id="connPill"><span class="dot2"></span><span id="connLabel">Conectado</span></div>
       <div class="pill" id="turnChip">—</div>
-      <div class="pill" id="groupChip">—</div>
+      <button class="btn btn-danger" id="leaveBtn" title="Salir">✕</button>
+    </div>
+    <div id="scoreBar">
+      <div class="scoreSide" id="scoreP1">
+        <span class="scoreName" id="scoreP1Name">Jugador 1</span>
+        <span class="scoreType" id="scoreP1Type">Mesa abierta</span>
+      </div>
+      <div class="scoreSide" id="scoreP2">
+        <span class="scoreName" id="scoreP2Name">Jugador 2</span>
+        <span class="scoreType" id="scoreP2Type">Mesa abierta</span>
+      </div>
     </div>
     <div id="tableWrap">
+      <div id="powerBar">
+        <div id="powerBarLabel">0%</div>
+        <div id="powerThumb"></div>
+      </div>
       <canvas id="tbl"></canvas>
       <div id="toast"></div>
-    </div>
-    <div id="gameBottomBar">
-      <div id="powerSlider">
-        <div id="powerLabel">50%</div>
-        <div id="powerFill"></div>
-      </div>
-      <button class="btn btn-primary" id="shootBtn">Tirar</button>
-      <button class="btn btn-danger" id="leaveBtn" title="Salir">✕</button>
     </div>
   </section>
 
@@ -330,10 +356,13 @@
   var menuError = $('menuError');
   var createStatus = $('createStatus'), createError = $('createError'), roomCodeText = $('roomCodeText');
   var joinCodeInput = $('joinCodeInput'), joinStatus = $('joinStatus'), joinStatusLine = $('joinStatusLine'), joinError = $('joinError');
-  var connPill = $('connPill'), connLabel = $('connLabel'), turnChip = $('turnChip'), groupChip = $('groupChip');
+  var connPill = $('connPill'), connLabel = $('connLabel'), turnChip = $('turnChip');
+  var scoreP1 = $('scoreP1'), scoreP1Name = $('scoreP1Name'), scoreP1Type = $('scoreP1Type');
+  var scoreP2 = $('scoreP2'), scoreP2Name = $('scoreP2Name'), scoreP2Type = $('scoreP2Type');
+  var nameInput = $('nameInput');
   var canvas = $('tbl'), tableWrap = $('tableWrap'), toastEl = $('toast');
-  var powerSlider = $('powerSlider'), powerFill = $('powerFill'), powerLabel = $('powerLabel');
-  var shootBtn = $('shootBtn'), leaveBtn = $('leaveBtn');
+  var powerBar = $('powerBar'), powerThumb = $('powerThumb'), powerBarLabel = $('powerBarLabel');
+  var leaveBtn = $('leaveBtn');
   var modalGO = $('modalGameOver'), goTitle = $('goTitle'), goReason = $('goReason'), rematchBtn = $('rematchBtn'), goMenuBtn = $('goMenuBtn');
   var ctx = canvas.getContext('2d');
 
@@ -375,6 +404,19 @@
   var shotTrack = null;
   var settled = true;
   var lastBroadcast = 0;
+  var myName = '';
+  var names = {1: null, 2: null};
+
+  function getMyName(){
+    var v = (nameInput.value || '').trim().slice(0, 16);
+    if (!v) v = 'Jugador';
+    try{ localStorage.setItem('mc_name', v); }catch(e){}
+    return v;
+  }
+  try{
+    var savedName = localStorage.getItem('mc_name');
+    if (savedName) nameInput.value = savedName;
+  }catch(e){}
 
   function cloneBallsForWire(src){
     var out = [];
@@ -659,6 +701,9 @@
       breakPlayer = breakPlayer === 1 ? 2 : 1;
       resetMatch();
       broadcastStart();
+    } else if (msg.t === 'hello'){
+      names[2] = (msg.name || 'Jugador 2').slice(0, 16);
+      updateHud();
     } else if (msg.t === 'leave'){
       opponentLeft();
     }
@@ -670,6 +715,7 @@
       remoteTarget = cloneBallsForWire(balls);
       renderBalls = deepCloneBalls(balls);
       currentTurn = msg.turn; groups = msg.groups; phase = msg.phase;
+      names[1] = (msg.name || 'Jugador 1').slice(0, 16);
       winner = null; winReason = '';
       startGameScreen();
     } else if (msg.t === 'state'){
@@ -686,13 +732,14 @@
   }
 
   function broadcastStart(){
-    var payload = { t: 'start', balls: balls, turn: currentTurn, groups: groups, phase: phase };
+    var payload = { t: 'start', balls: balls, turn: currentTurn, groups: groups, phase: phase, name: myName };
     if (conn && conn.open){ try{ conn.send(payload); }catch(e){} }
     startGameScreen();
   }
 
   function opponentLeft(){
-    showToastPersist('Tu rival se desconectó');
+    var oppName = names[myPlayer === 1 ? 2 : 1] || 'Tu rival';
+    showToastPersist(oppName + ' se desconectó');
     teardownConnection();
     setTimeout(function(){
       showScreen('menu');
@@ -713,6 +760,8 @@
   function startCreateRoom(){
     createError.textContent = '';
     createStatus.textContent = 'Creando sala…';
+    myName = getMyName();
+    names[1] = myName;
     audio();
     if (!peerJsAvailable()){ createError.textContent = 'No se pudo cargar el motor de conexión. Recargá la página.'; return; }
     createAttempts = 0;
@@ -769,6 +818,8 @@
     joinError.textContent = '';
     var code = (joinCodeInput.value || '').trim().toUpperCase();
     if (code.length < 4){ joinError.textContent = 'Ingresá el código completo.'; return; }
+    myName = getMyName();
+    names[2] = myName;
     audio();
     if (!peerJsAvailable()){ joinError.textContent = 'No se pudo cargar el motor de conexión. Recargá la página.'; return; }
     joinStatusLine.hidden = false;
@@ -800,6 +851,7 @@
     conn.on('open', function(){
       clearTimeout(timeout);
       joinStatus.textContent = 'Conectado. Esperando la mesa…';
+      sendToHost({t:'hello', name: myName});
     });
     conn.on('data', function(d){ handleGuestMessage(d); });
     conn.on('close', function(){ if (phase !== 'menu') opponentLeft(); });
@@ -814,6 +866,7 @@
     try{ if (conn) conn.close(); }catch(e){}
     try{ if (peer) peer.destroy(); }catch(e){}
     conn = null; peer = null; myRole = null; myPlayer = null; phase = 'menu';
+    names = {1: null, 2: null};
   }
 
   function resetConnLabel(){
@@ -824,7 +877,8 @@
   /* ================================ RENDER ==================================== */
   var renderScale = 1;
   function resizeCanvas(){
-    var w = tableWrap.clientWidth, h = tableWrap.clientHeight;
+    var pbWidth = powerBar.getBoundingClientRect().width || 34;
+    var w = tableWrap.clientWidth - pbWidth - 10, h = tableWrap.clientHeight;
     if (w < 10 || h < 10) return;
     var scale = Math.min(w / TABLE_W, h / TABLE_H);
     var dpr = Math.min(window.devicePixelRatio || 1, 2.5);
@@ -1083,7 +1137,7 @@
       placing.x = clamp(pt.x, MIN_X, MAX_X);
       placing.y = clamp(pt.y, MIN_Y, MAX_Y);
     }
-    canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+    try{ canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId); }catch(err){}
   });
   canvas.addEventListener('pointermove', function(e){
     if (myPlayer !== currentTurn) return;
@@ -1108,30 +1162,42 @@
     else sendToHost({t:'place', x: placing.x, y: placing.y});
   }
 
-  /* power slider (custom vertical) */
+  /* power bar: drag down to pull back, release to fire (8 Ball Pool style) */
+  var MIN_FIRE_POWER = 0.04;
+
   function setPower(p){
     power = clamp(p, 0, 1);
-    powerFill.style.height = Math.round(power * 100) + '%';
-    powerLabel.textContent = Math.round(power * 100) + '%';
+    powerThumb.style.top = Math.round(power * 100) + '%';
+    powerBarLabel.textContent = Math.round(power * 100) + '%';
   }
   function setPowerFromClientY(clientY){
-    var rect = powerSlider.getBoundingClientRect();
+    var rect = powerBar.getBoundingClientRect();
     if (rect.height < 1) return;
-    setPower(1 - (clientY - rect.top) / rect.height);
+    setPower((clientY - rect.top) / rect.height);
   }
-  var sliderDragging = false;
-  powerSlider.addEventListener('pointerdown', function(e){ sliderDragging = true; setPowerFromClientY(e.clientY); powerSlider.setPointerCapture && powerSlider.setPointerCapture(e.pointerId); });
-  powerSlider.addEventListener('pointermove', function(e){ if (sliderDragging) setPowerFromClientY(e.clientY); });
-  powerSlider.addEventListener('pointerup', function(){ sliderDragging = false; });
-  setPower(0.5);
+  function canFire(){ return phase === 'aim' && myPlayer === currentTurn; }
 
-  shootBtn.addEventListener('click', function(){
-    if (phase !== 'aim' || myPlayer !== currentTurn) return;
-    shootAnim.t = 0; shootAnim.active = true;
-    var angle = aiming.angle, p = power;
-    if (myRole === 'host') hostApplyShot(angle, p);
-    else sendToHost({t:'shoot', angle: angle, power: p});
+  var powerDragging = false;
+  powerBar.addEventListener('pointerdown', function(e){
+    if (!canFire()) return;
+    powerDragging = true;
+    setPowerFromClientY(e.clientY);
+    try{ powerBar.setPointerCapture && powerBar.setPointerCapture(e.pointerId); }catch(err){}
   });
+  powerBar.addEventListener('pointermove', function(e){
+    if (powerDragging) setPowerFromClientY(e.clientY);
+  });
+  powerBar.addEventListener('pointerup', function(){
+    if (!powerDragging) return;
+    powerDragging = false;
+    var firedPower = power;
+    if (!canFire() || firedPower < MIN_FIRE_POWER) { setPower(0); return; }
+    shootAnim.t = 0; shootAnim.active = true;
+    var angle = aiming.angle;
+    if (myRole === 'host') hostApplyShot(angle, firedPower);
+    else sendToHost({t:'shoot', angle: angle, power: firedPower});
+  });
+  setPower(0);
 
   leaveBtn.addEventListener('click', function(){
     sendToHost({t:'leave'});
@@ -1177,6 +1243,7 @@
 
   function startGameScreen(){
     showScreen('game');
+    toastEl.classList.remove('show');
     requestAnimationFrame(resizeCanvas);
     updateHud();
   }
@@ -1193,16 +1260,43 @@
 
   function groupLabel(t){ return t === 'solid' ? 'Lisas' : (t === 'stripe' ? 'Rayadas' : '—'); }
 
+  function isPocketed(id){
+    if (myRole === 'host') return balls[id].pocketed;
+    var t = findTarget(id);
+    return t ? !!t[3] : false;
+  }
+
+  function remainingCount(type){
+    var n = 0;
+    for (var i = 1; i <= 15; i++){ if (BALL_DEFS[i].type === type && !isPocketed(i)) n++; }
+    return n;
+  }
+
+  function renderScoreSide(player, el, nameEl, typeEl){
+    var label = names[player] || ('Jugador ' + player);
+    if (player === myPlayer) label += ' (vos)';
+    nameEl.textContent = label;
+    var t = groups[player];
+    typeEl.textContent = t ? (groupLabel(t) + ' · ' + remainingCount(t)) : 'Mesa abierta';
+    el.classList.toggle('active', currentTurn === player);
+  }
+
+  function updateScoreboard(){
+    renderScoreSide(1, scoreP1, scoreP1Name, scoreP1Type);
+    renderScoreSide(2, scoreP2, scoreP2Name, scoreP2Type);
+  }
+
   function updateHud(){
     var mine = (myPlayer === currentTurn);
-    shootBtn.disabled = !(mine && phase === 'aim');
+    powerBar.classList.toggle('disabled', !(mine && phase === 'aim'));
+    if (mine && phase === 'aim' && !powerDragging) setPower(0);
+    var oppLabel = names[currentTurn] || 'tu rival';
     if (phase === 'placing'){
-      turnChip.innerHTML = mine ? 'Tocá la mesa para colocar la blanca' : 'Tu rival coloca la blanca';
+      turnChip.innerHTML = mine ? 'Tocá la mesa para colocar la blanca' : (oppLabel + ' coloca la blanca');
     } else {
-      turnChip.innerHTML = mine ? '<b>Tu turno</b>' : 'Turno de tu rival';
+      turnChip.innerHTML = mine ? '<b>Tu turno</b>' : ('Turno de ' + oppLabel);
     }
-    var g = groups[myPlayer];
-    groupChip.textContent = g ? ('Jugás: ' + groupLabel(g)) : 'Mesa abierta';
+    updateScoreboard();
   }
 
   function showGameOver(){
