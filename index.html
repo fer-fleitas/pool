@@ -141,13 +141,6 @@
   }
   #toast.show{opacity:1; transform:translate(-50%,0);}
 
-  #waitOverlay{
-    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
-    background:rgba(5,7,4,.45); border-radius:10px; font:700 13px var(--font-body);
-    color:var(--cream-dim); letter-spacing:.03em; text-transform:uppercase;
-  }
-  #waitOverlay[hidden]{display:none;}
-
   #gameBottomBar{
     flex:0 0 auto; display:flex; align-items:center; gap:14px; padding:8px 0 14px;
   }
@@ -248,7 +241,6 @@
     <div id="tableWrap">
       <canvas id="tbl"></canvas>
       <div id="toast"></div>
-      <div id="waitOverlay" hidden>Esperando a tu rival…</div>
     </div>
     <div id="gameBottomBar">
       <div id="powerSlider">
@@ -339,7 +331,7 @@
   var createStatus = $('createStatus'), createError = $('createError'), roomCodeText = $('roomCodeText');
   var joinCodeInput = $('joinCodeInput'), joinStatus = $('joinStatus'), joinStatusLine = $('joinStatusLine'), joinError = $('joinError');
   var connPill = $('connPill'), connLabel = $('connLabel'), turnChip = $('turnChip'), groupChip = $('groupChip');
-  var canvas = $('tbl'), tableWrap = $('tableWrap'), toastEl = $('toast'), waitOverlay = $('waitOverlay');
+  var canvas = $('tbl'), tableWrap = $('tableWrap'), toastEl = $('toast');
   var powerSlider = $('powerSlider'), powerFill = $('powerFill'), powerLabel = $('powerLabel');
   var shootBtn = $('shootBtn'), leaveBtn = $('leaveBtn');
   var modalGO = $('modalGameOver'), goTitle = $('goTitle'), goReason = $('goReason'), rematchBtn = $('rematchBtn'), goMenuBtn = $('goMenuBtn');
@@ -930,20 +922,20 @@
   var shootAnim = {t: 0, active: false};
   var placing = {x: TABLE_W/2, y: TABLE_H/2};
 
-  function predictGuideLength(cue, angle){
+  function predictGuidePath(cue, angle){
     var step = 2.2, maxLen = 520, len = 0;
     var dx = Math.cos(angle), dy = Math.sin(angle);
     var x = cue.x, y = cue.y;
     while (len < maxLen){
       x += dx*step; y += dy*step; len += step;
-      if (x < MIN_X || x > MAX_X || y < MIN_Y || y > MAX_Y) return len;
+      if (x < MIN_X || x > MAX_X || y < MIN_Y || y > MAX_Y) return {len:len, hit:null};
       for (var i = 1; i < balls.length; i++){
         var b = getRenderBallArray()[i];
         if (!b || b.pocketed) continue;
-        if (Math.hypot(x - b.x, y - b.y) < BALL_R * 2) return len;
+        if (Math.hypot(x - b.x, y - b.y) < BALL_R * 2) return {len:len, hit:b, cueAt:{x:x,y:y}};
       }
     }
-    return len;
+    return {len:len, hit:null};
   }
 
   function getRenderBallArray(){ return (myRole === 'host') ? balls : renderBalls; }
@@ -951,7 +943,7 @@
   function drawGuideAndCue(cue, canInteract){
     if (!canInteract) return;
     var angle = aiming.angle;
-    var len = predictGuideLength(cue, angle);
+    var path = predictGuidePath(cue, angle);
     var dx = Math.cos(angle), dy = Math.sin(angle);
     ctx.save();
     ctx.setLineDash([4, 5]);
@@ -959,9 +951,31 @@
     ctx.lineWidth = 1.1;
     ctx.beginPath();
     ctx.moveTo(cue.x + dx*BALL_R, cue.y + dy*BALL_R);
-    ctx.lineTo(cue.x + dx*len, cue.y + dy*len);
+    ctx.lineTo(cue.x + dx*path.len, cue.y + dy*path.len);
     ctx.stroke();
     ctx.restore();
+
+    if (path.hit){
+      var ocx = path.hit.x, ocy = path.hit.y;
+      var ndx = ocx - path.cueAt.x, ndy = ocy - path.cueAt.y;
+      var nlen = Math.hypot(ndx, ndy) || 1;
+      ndx /= nlen; ndy /= nlen;
+      ctx.save();
+      ctx.setLineDash([3, 4]);
+      ctx.strokeStyle = 'rgba(214,173,78,.85)';
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(ocx, ocy);
+      ctx.lineTo(ocx + ndx * 95, ocy + ndy * 95);
+      ctx.stroke();
+      ctx.setLineDash([2, 3]);
+      ctx.strokeStyle = 'rgba(241,232,207,.4)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(path.cueAt.x, path.cueAt.y, BALL_R, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
 
     var basePull = 18 + power * 46;
     var thrust = shootAnim.active ? shootAnim.t * basePull : 0;
@@ -1180,7 +1194,6 @@
   function groupLabel(t){ return t === 'solid' ? 'Lisas' : (t === 'stripe' ? 'Rayadas' : '—'); }
 
   function updateHud(){
-    waitOverlay.hidden = !(myPlayer !== currentTurn && (phase === 'aim' || phase === 'placing'));
     var mine = (myPlayer === currentTurn);
     shootBtn.disabled = !(mine && phase === 'aim');
     if (phase === 'placing'){
