@@ -313,7 +313,7 @@
   var MAX_SPEED_CAP = 1300;
   var REST_BALL = 0.97;          // ball-ball restitution
   var REST_WALL = 0.86;          // wall restitution
-  var SUBSTEPS = 4;
+  var SUBSTEPS_MIN = 2, SUBSTEPS_MAX = 8;
   var SHOT_MIN_SPEED = 130, SHOT_MAX_EXTRA = 1080;
   var BROADCAST_INTERVAL = 42; // ms (~24Hz) while balls move
 
@@ -402,8 +402,8 @@
 
   /* ============================= GAME STATE ================================ */
   var balls = [];        // host-authoritative source of truth (also used directly by host for render)
-  var remoteTarget = []; // guest: latest snapshot from host
-  var renderBalls = [];  // guest: interpolated copy used for drawing
+  var renderBalls = [];  // guest: predicted/received copy used for drawing (x,y,vx,vy,targetX,targetY,pocketed)
+  var pocketedThisInterval = []; // host: ball ids pocketed since the last lightweight tick, reported once
   var currentTurn = 1;
   var groups = {1: null, 2: null};
   var phase = 'menu';     // 'aim' | 'placing' | 'resolving' | 'gameover'
@@ -430,7 +430,7 @@
     var out = [];
     for (var i = 0; i < src.length; i++){
       var b = src[i];
-      out.push([b.id, round2(b.x), round2(b.y), b.pocketed ? 1 : 0]);
+      out.push([b.id, round2(b.x), round2(b.y), b.pocketed ? 1 : 0, round2(b.vx), round2(b.vy)]);
     }
     return out;
   }
@@ -484,8 +484,23 @@
   }
 
   function stepPhysics(dt){
-    var sub = dt / SUBSTEPS;
-    for (var s = 0; s < SUBSTEPS; s++) stepSub(sub);
+    // Sub-pasos escalados a la velocidad real de la bola más rápida: cada
+    // sub-paso tiene que avanzar bastante menos que un diámetro de bola, o
+    // dos bolas podrían "tunelear" (cruzarse sin que el choque se detecte).
+    // Con los topes actuales (MAX_SPEED_CAP) con 4 ya alcanzaba de sobra,
+    // pero si el día de mañana se sube la velocidad máxima esto se ajusta
+    // solo en vez de volver a abrir este archivo.
+    var maxSpeed = 0;
+    for (var i = 0; i < balls.length; i++){
+      var b = balls[i];
+      if (b.pocketed) continue;
+      var sp = Math.hypot(b.vx, b.vy);
+      if (sp > maxSpeed) maxSpeed = sp;
+    }
+    var needed = Math.ceil((maxSpeed * dt) / (BALL_R * 1.4));
+    var sub = Math.max(SUBSTEPS_MIN, Math.min(SUBSTEPS_MAX, needed || SUBSTEPS_MIN));
+    var subDt = dt / sub;
+    for (var s = 0; s < sub; s++) stepSub(subDt);
   }
 
   function stepSub(dt){
@@ -558,6 +573,7 @@
 
   function onBallPocketed(id){
     sndPocket();
+    pocketedThisInterval.push(id);
     if (!shotTrack) return;
     if (id === 0) shotTrack.cueScratch = true;
     else if (id === 8) shotTrack.eightPotted = true;
@@ -604,6 +620,11 @@
     var shooter = currentTurn, opponent = (shooter === 1) ? 2 : 1;
     var foul = false, reasons = [];
     var track = shotTrack || {firstContact:null, potted:[], cueScratch:false, eightPotted:false};
+    // Grupo del tirador ANTES de este tiro: si este es el tiro que recién define
+    // lisas/rayadas, no puede además fallar por "bola equivocada" contra un
+    // grupo que todavía no existía cuando tiró (p. ej. una combinada donde la
+    // bola que tocás primero no es la misma que la que termina embocada).
+    var shooterGroupBeforeShot = groups[shooter];
 
     if (!track.firstContact) { foul = true; reasons.push('No tocaste ninguna bola'); }
 
@@ -616,10 +637,10 @@
       }
     }
 
-    if (!foul && groups[shooter] && track.firstContact){
+    if (!foul && shooterGroupBeforeShot && track.firstContact){
       var ct = ballType(track.firstContact);
       var cleared = isGroupCleared(shooter);
-      if (ct !== groups[shooter] && !(ct === 'eight' && cleared)){
+      if (ct !== shooterGroupBeforeShot && !(ct === 'eight' && cleared)){
         foul = true; reasons.push('Golpeaste primero una bola que no era tuya');
       }
     }
@@ -662,6 +683,14 @@
   }
 
   /* ============================= NETWORK SYNC =============================== */
+  // Dos formas de mensaje para las bolas:
+  //  - 'state': snapshot completo (las 16 bolas) solo en los momentos que
+  //    importan (arranca el tiro, termina el tiro, falta, fin de partida).
+  //    Poco frecuente, así que va completo sin preocuparse por el tamaño.
+  //  - 'tick': mientras las bolas están en movimiento, solo las que siguen
+  //    en vuelo (o que acaban de entrar a una tronera), a ~24Hz. En una
+  //    tacada normal son 2-6 bolas de 16, así que el paquete pesa una
+  //    fracción de lo que costaba reenviar las 16 enteras cada vez.
   function buildStatePayload(extraMsg){
     return {
       t: 'state',
@@ -683,6 +712,40 @@
     applyIncomingState(buildStatePayload(msg), true);
   }
 
+  function sendTick(){
+    var list = [];
+    for (var i = 0; i < balls.length; i++){
+      var b = balls[i];
+      var justPocketed = b.pocketed && pocketedThisInterval.indexOf(b.id) !== -1;
+      var moving = !b.pocketed && (Math.abs(b.vx) > 0.01 || Math.abs(b.vy) > 0.01);
+      if (moving || justPocketed){
+        list.push([b.id, round2(b.x), round2(b.y), b.pocketed ? 1 : 0, round2(b.vx), round2(b.vy)]);
+      }
+    }
+    pocketedThisInterval.length = 0;
+    if (list.length && conn && conn.open){
+      try{ conn.send({t: 'tick', b: list}); }catch(e){}
+    }
+  }
+
+  // Aplica una lista de entradas [id,x,y,pocketed,vx,vy] a renderBalls (lado
+  // invitado). La usan tanto el snapshot completo ('state'/'start') como el
+  // liviano ('tick'): un solo camino de código para "me llegó la verdad del
+  // host", sin importar qué tan grande vino el mensaje.
+  function applyBallWireEntries(list){
+    for (var i = 0; i < list.length; i++){
+      var e = list[i];
+      var rb = renderBalls[e[0]];
+      if (!rb) continue;
+      rb.pocketed = !!e[3];
+      if (rb.pocketed){ rb.vx = 0; rb.vy = 0; continue; }
+      rb.x = e[1]; rb.y = e[2];
+      rb.vx = e[4]; rb.vy = e[5];
+      rb.targetX = e[1]; rb.targetY = e[2];
+      rb.hasTarget = true;
+    }
+  }
+
   function applyIncomingState(data, isLocalEcho){
     currentTurn = data.turn;
     groups = data.groups;
@@ -691,20 +754,25 @@
     winReason = data.reason;
     if (data.msg) showToast(data.msg);
     if (data.phase === 'gameover') showGameOver();
-    if (myRole === 'guest'){
-      remoteTarget = data.balls;
-      if (!isLocalEcho) { /* nothing else to do, render loop interpolates */ }
+    if (myRole === 'guest' && !isLocalEcho){
+      applyBallWireEntries(data.balls);
     }
     updateHud();
   }
 
   function sendToHost(obj){ if (conn && conn.open) { try{ conn.send(obj); }catch(e){} } }
 
+  function isFiniteNum(n){ return typeof n === 'number' && isFinite(n); }
+
   function handleHostMessage(msg){
     if (msg.t === 'shoot'){
-      if (currentTurn === 2 && phase === 'aim') hostApplyShot(msg.angle, msg.power);
+      if (currentTurn === 2 && phase === 'aim' && isFiniteNum(msg.angle) && isFiniteNum(msg.power)){
+        hostApplyShot(msg.angle, msg.power);
+      }
     } else if (msg.t === 'place'){
-      if (currentTurn === 2 && phase === 'placing') hostPlaceCue(msg.x, msg.y);
+      if (currentTurn === 2 && phase === 'placing' && isFiniteNum(msg.x) && isFiniteNum(msg.y)){
+        hostPlaceCue(msg.x, msg.y);
+      }
     } else if (msg.t === 'rematch'){
       breakPlayer = breakPlayer === 1 ? 2 : 1;
       resetMatch();
@@ -720,7 +788,6 @@
   function handleGuestMessage(msg){
     if (msg.t === 'start'){
       balls = msg.balls;
-      remoteTarget = cloneBallsForWire(balls);
       renderBalls = deepCloneBalls(balls);
       currentTurn = msg.turn; groups = msg.groups; phase = msg.phase;
       names[1] = (msg.name || 'Jugador 1').slice(0, 16);
@@ -728,6 +795,8 @@
       startGameScreen();
     } else if (msg.t === 'state'){
       applyIncomingState(msg, false);
+    } else if (msg.t === 'tick'){
+      applyBallWireEntries(msg.b);
     } else if (msg.t === 'leave'){
       opponentLeft();
     }
@@ -735,7 +804,10 @@
 
   function deepCloneBalls(src){
     var out = [];
-    for (var i = 0; i < src.length; i++){ var b = src[i]; out.push({id:b.id, x:b.x, y:b.y, pocketed:b.pocketed}); }
+    for (var i = 0; i < src.length; i++){
+      var b = src[i];
+      out.push({id:b.id, x:b.x, y:b.y, pocketed:b.pocketed, vx:0, vy:0, targetX:b.x, targetY:b.y, hasTarget:true});
+    }
     return out;
   }
 
@@ -871,6 +943,7 @@
   }
 
   function teardownConnection(){
+    stopLoop();
     try{ if (conn) conn.close(); }catch(e){}
     try{ if (peer) peer.destroy(); }catch(e){}
     conn = null; peer = null; myRole = null; myPlayer = null; phase = 'menu';
@@ -900,83 +973,125 @@
   window.addEventListener('resize', resizeCanvas);
   window.addEventListener('orientationchange', function(){ setTimeout(resizeCanvas, 60); });
 
-  function diamond(cx, cy, s){
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - s); ctx.lineTo(cx + s, cy); ctx.lineTo(cx, cy + s); ctx.lineTo(cx - s, cy);
-    ctx.closePath(); ctx.fill();
+  function diamond(c, cx, cy, s){
+    c.beginPath();
+    c.moveTo(cx, cy - s); c.lineTo(cx + s, cy); c.lineTo(cx, cy + s); c.lineTo(cx - s, cy);
+    c.closePath(); c.fill();
   }
 
-  function drawTable(){
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, TABLE_W, TABLE_H);
-    var rg = ctx.createLinearGradient(0, 0, TABLE_W, TABLE_H);
+  function roundRectPath(c, x, y, w, h, r){
+    c.beginPath();
+    c.moveTo(x+r, y);
+    c.arcTo(x+w, y, x+w, y+h, r);
+    c.arcTo(x+w, y+h, x, y+h, r);
+    c.arcTo(x, y+h, x, y, r);
+    c.arcTo(x, y, x+w, y, r);
+    c.closePath();
+  }
+
+  // La mesa (fieltro, bandas, diamantes, troneras) es 100% estática: nada de
+  // esto cambia nunca entre frames. Antes se reconstruían 2 gradientes + 20
+  // rombos + 6 gradientes de tronera en CADA frame (60 veces por segundo).
+  // Ahora se dibuja una sola vez a un canvas offscreen a 2x de resolución
+  // (nitidez de sobra en pantallas de alta densidad) y cada frame solo hace
+  // un drawImage: la diferencia de costo en la CPU/GPU es enorme,
+  // especialmente en celulares de gama baja/media.
+  function drawTableOnto(c){
+    c.fillStyle = '#000'; c.fillRect(0, 0, TABLE_W, TABLE_H);
+    var rg = c.createLinearGradient(0, 0, TABLE_W, TABLE_H);
     rg.addColorStop(0, '#6a4426'); rg.addColorStop(1, '#3a240f');
-    roundRectPath(0, 0, TABLE_W, TABLE_H, 16); ctx.fillStyle = rg; ctx.fill();
+    roundRectPath(c, 0, 0, TABLE_W, TABLE_H, 16); c.fillStyle = rg; c.fill();
 
     var fx = CUSHION * 0.55, fy = CUSHION * 0.55;
     var fw = TABLE_W - fx * 2, fh = TABLE_H - fy * 2;
-    var fg = ctx.createRadialGradient(TABLE_W/2, TABLE_H/2, 10, TABLE_W/2, TABLE_H/2, TABLE_H*0.6);
+    var fg = c.createRadialGradient(TABLE_W/2, TABLE_H/2, 10, TABLE_W/2, TABLE_H/2, TABLE_H*0.6);
     fg.addColorStop(0, '#126a48'); fg.addColorStop(1, '#0a4830');
-    roundRectPath(fx, fy, fw, fh, 8); ctx.fillStyle = fg; ctx.fill();
+    roundRectPath(c, fx, fy, fw, fh, 8); c.fillStyle = fg; c.fill();
 
-    ctx.fillStyle = 'rgba(241,232,207,.5)';
+    c.fillStyle = 'rgba(241,232,207,.5)';
     var marks = [0.2, 0.4, 0.6, 0.8];
     for (var i = 0; i < marks.length; i++){
-      diamond(TABLE_W * marks[i], CUSHION * 0.28, 2.1);
-      diamond(TABLE_W * marks[i], TABLE_H - CUSHION * 0.28, 2.1);
+      diamond(c, TABLE_W * marks[i], CUSHION * 0.28, 2.1);
+      diamond(c, TABLE_W * marks[i], TABLE_H - CUSHION * 0.28, 2.1);
     }
     var vmarks = [0.15,0.3,0.42,0.58,0.7,0.85];
     for (i = 0; i < vmarks.length; i++){
-      diamond(CUSHION * 0.28, TABLE_H * vmarks[i], 2.1);
-      diamond(TABLE_W - CUSHION * 0.28, TABLE_H * vmarks[i], 2.1);
+      diamond(c, CUSHION * 0.28, TABLE_H * vmarks[i], 2.1);
+      diamond(c, TABLE_W - CUSHION * 0.28, TABLE_H * vmarks[i], 2.1);
     }
 
     for (i = 0; i < POCKETS.length; i++){
       var p = POCKETS[i];
-      var pg = ctx.createRadialGradient(p.x, p.y, 1, p.x, p.y, POCKET_R);
+      var pg = c.createRadialGradient(p.x, p.y, 1, p.x, p.y, POCKET_R);
       pg.addColorStop(0, '#000'); pg.addColorStop(1, '#1a1a1a');
-      ctx.beginPath(); ctx.arc(p.x, p.y, POCKET_R, 0, Math.PI*2); ctx.fillStyle = pg; ctx.fill();
+      c.beginPath(); c.arc(p.x, p.y, POCKET_R, 0, Math.PI*2); c.fillStyle = pg; c.fill();
     }
   }
 
-  function roundRectPath(x, y, w, h, r){
-    ctx.beginPath();
-    ctx.moveTo(x+r, y);
-    ctx.arcTo(x+w, y, x+w, y+h, r);
-    ctx.arcTo(x+w, y+h, x, y+h, r);
-    ctx.arcTo(x, y+h, x, y, r);
-    ctx.arcTo(x, y, x+w, y, r);
-    ctx.closePath();
+  var tableSprite = (function(){
+    var scaleFactor = 2;
+    var off = document.createElement('canvas');
+    off.width = Math.round(TABLE_W * scaleFactor);
+    off.height = Math.round(TABLE_H * scaleFactor);
+    var octx = off.getContext('2d');
+    octx.scale(scaleFactor, scaleFactor);
+    drawTableOnto(octx);
+    return off;
+  })();
+
+  function drawTable(){
+    ctx.drawImage(tableSprite, 0, 0, TABLE_W, TABLE_H);
+  }
+
+  // Igual idea para las 16 bolas: antes cada una recreaba un clip + 2
+  // gradientes + texto en cada frame. Ahora cada diseño de bola (son solo 16,
+  // fijos para toda la partida) se dibuja una vez a su propio canvas chico, y
+  // en cada frame renderizar una bola es un simple drawImage.
+  var BALL_SPRITE_PX = 96;
+  var ballSprites = buildBallSprites();
+  function buildBallSprites(){
+    var sprites = [];
+    var S = BALL_SPRITE_PX, r = S/2 - 2, cx = S/2, cy = S/2;
+    for (var id = 0; id < BALL_DEFS.length; id++){
+      var def = BALL_DEFS[id];
+      var off = document.createElement('canvas');
+      off.width = S; off.height = S;
+      var c = off.getContext('2d');
+
+      c.save();
+      c.beginPath(); c.arc(cx, cy, r, 0, Math.PI*2); c.closePath(); c.clip();
+      if (def.type === 'stripe'){
+        c.fillStyle = '#f4eedd'; c.fillRect(cx-r, cy-r, r*2, r*2);
+        c.fillStyle = def.color; c.fillRect(cx-r, cy-r*0.55, r*2, r*1.1);
+      } else {
+        c.fillStyle = def.color; c.fillRect(cx-r, cy-r, r*2, r*2);
+      }
+      var hg = c.createRadialGradient(cx - r*0.35, cy - r*0.4, 0.5, cx - r*0.1, cy - r*0.1, r*1.3);
+      hg.addColorStop(0, 'rgba(255,255,255,.65)'); hg.addColorStop(0.5, 'rgba(255,255,255,.08)'); hg.addColorStop(1, 'rgba(255,255,255,0)');
+      c.fillStyle = hg; c.fillRect(cx-r, cy-r, r*2, r*2);
+      c.restore();
+
+      c.beginPath(); c.arc(cx, cy, r, 0, Math.PI*2);
+      c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = r * 0.07; c.stroke();
+
+      if (def.type !== 'cue'){
+        var dr = r * 0.44;
+        c.beginPath(); c.arc(cx, cy, dr, 0, Math.PI*2);
+        c.fillStyle = '#f4eedd'; c.fill();
+        c.fillStyle = '#17120a';
+        c.font = 'bold ' + Math.round(dr*1.35) + 'px Inter, sans-serif';
+        c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.fillText(String(id), cx, cy + 0.6);
+      }
+      sprites[id] = off;
+    }
+    return sprites;
   }
 
   function drawBall(b){
     if (b.pocketed) return;
-    var cx = b.x, cy = b.y, r = BALL_R;
-    var def = BALL_DEFS[b.id];
-    ctx.save();
-    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.closePath(); ctx.clip();
-    if (def.type === 'stripe'){
-      ctx.fillStyle = '#f4eedd'; ctx.fillRect(cx-r, cy-r, r*2, r*2);
-      ctx.fillStyle = def.color; ctx.fillRect(cx-r, cy-r*0.55, r*2, r*1.1);
-    } else {
-      ctx.fillStyle = def.color; ctx.fillRect(cx-r, cy-r, r*2, r*2);
-    }
-    var hg = ctx.createRadialGradient(cx - r*0.35, cy - r*0.4, 0.5, cx - r*0.1, cy - r*0.1, r*1.3);
-    hg.addColorStop(0, 'rgba(255,255,255,.65)'); hg.addColorStop(0.5, 'rgba(255,255,255,.08)'); hg.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = hg; ctx.fillRect(cx-r, cy-r, r*2, r*2);
-    ctx.restore();
-
-    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2);
-    ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 0.6; ctx.stroke();
-
-    if (def.type !== 'cue'){
-      var dr = r * 0.44;
-      ctx.beginPath(); ctx.arc(cx, cy, dr, 0, Math.PI*2);
-      ctx.fillStyle = '#f4eedd'; ctx.fill();
-      ctx.fillStyle = '#17120a';
-      ctx.font = (dr*1.35) + 'px Inter, sans-serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(String(b.id), cx, cy + 0.3);
-    }
+    var r = BALL_R;
+    ctx.drawImage(ballSprites[b.id], b.x - r, b.y - r, r*2, r*2);
   }
 
   var aiming = {active:false, angle: -Math.PI/2, dragging:false};
@@ -984,20 +1099,44 @@
   var shootAnim = {t: 0, active: false};
   var placing = {x: TABLE_W/2, y: TABLE_H/2};
 
+  // Antes esto avanzaba a pasitos de 2.2 unidades (hasta ~236 pasos) y en
+  // cada paso recorría las 15 bolas buscando la más cercana: hasta ~3500
+  // chequeos de distancia por frame mientras apuntás. Acá se reemplaza por
+  // geometría cerrada (intersección rayo-círculo contra cada bola, y
+  // rayo-rectángulo contra las bandas): un solo pase por las bolas, sin
+  // iteración, y además da el punto de impacto exacto en vez de uno
+  // redondeado al tamaño del paso.
   function predictGuidePath(cue, angle){
-    var step = 2.2, maxLen = 520, len = 0;
+    var maxLen = 520;
     var dx = Math.cos(angle), dy = Math.sin(angle);
-    var x = cue.x, y = cue.y;
-    while (len < maxLen){
-      x += dx*step; y += dy*step; len += step;
-      if (x < MIN_X || x > MAX_X || y < MIN_Y || y > MAX_Y) return {len:len, hit:null};
-      for (var i = 1; i < balls.length; i++){
-        var b = getRenderBallArray()[i];
-        if (!b || b.pocketed) continue;
-        if (Math.hypot(x - b.x, y - b.y) < BALL_R * 2) return {len:len, hit:b, cueAt:{x:x,y:y}};
-      }
+
+    var tWall = maxLen;
+    if (dx > 1e-6) tWall = Math.min(tWall, (MAX_X - cue.x) / dx);
+    else if (dx < -1e-6) tWall = Math.min(tWall, (MIN_X - cue.x) / dx);
+    if (dy > 1e-6) tWall = Math.min(tWall, (MAX_Y - cue.y) / dy);
+    else if (dy < -1e-6) tWall = Math.min(tWall, (MIN_Y - cue.y) / dy);
+    if (!(tWall > 0)) tWall = maxLen;
+
+    var sumR = BALL_R * 2, sumRSq = sumR * sumR;
+    var bestT = tWall, bestBall = null;
+    var arr = getRenderBallArray();
+    for (var i = 1; i < arr.length; i++){
+      var b = arr[i];
+      if (!b || b.pocketed) continue;
+      var ox = b.x - cue.x, oy = b.y - cue.y;
+      var proj = ox * dx + oy * dy;
+      if (proj < 0 || proj - sumR > bestT) continue;
+      var closeX = cue.x + dx * proj, closeY = cue.y + dy * proj;
+      var ddx = b.x - closeX, ddy = b.y - closeY;
+      var distSq = ddx * ddx + ddy * ddy;
+      if (distSq > sumRSq) continue;
+      var back = Math.sqrt(sumRSq - distSq);
+      var t = proj - back;
+      if (t >= 0 && t < bestT){ bestT = t; bestBall = b; }
     }
-    return {len:len, hit:null};
+
+    if (!bestBall) return {len: bestT, hit: null};
+    return {len: bestT, hit: bestBall, cueAt: {x: cue.x + dx * bestT, y: cue.y + dy * bestT}};
   }
 
   function getRenderBallArray(){ return (myRole === 'host') ? balls : renderBalls; }
@@ -1087,29 +1226,65 @@
     ctx.restore();
   }
 
+  // El loop solo corre mientras hay una partida en pantalla. Antes se pedía
+  // requestAnimationFrame para siempre, desde que se abría la página, aunque
+  // el usuario estuviera parado en el menú sin hacer nada: eso mantiene el
+  // dispositivo "despierto" sin necesidad. startLoop/stopLoop lo prenden y
+  // apagan junto con la pantalla de juego.
+  var loopActive = false;
+  function startLoop(){
+    if (loopActive) return;
+    loopActive = true;
+    raf.last = 0;
+    requestAnimationFrame(raf);
+  }
+  function stopLoop(){ loopActive = false; }
+
   function raf(){
+    if (!loopActive) return;
+
     var now = performance.now();
     if (!raf.last) raf.last = now;
     var dt = Math.min((now - raf.last) / 1000, 0.035);
     raf.last = now;
 
-    if (myRole === 'host' && phase !== 'gameover'){
+    // La física (y el envío de red que depende de ella) solo corre mientras
+    // hay una tacada en curso (!settled). El resto del tiempo —que es la
+    // mayor parte de una partida: apuntando, esperando al rival— esto ya no
+    // recorre las 16 bolas ni calcula fricción en cada frame.
+    if (myRole === 'host' && phase !== 'gameover' && !settled){
       stepPhysics(dt);
-      var moving = anyBallMoving();
-      if (moving){
-        if (now - lastBroadcast > BROADCAST_INTERVAL) broadcastState();
-      } else if (!settled){
+      if (anyBallMoving()){
+        if (now - lastBroadcast > BROADCAST_INTERVAL){
+          lastBroadcast = now;
+          sendTick();
+        }
+      } else {
         settled = true;
         if (phase === 'resolving') resolveShot();
       }
     }
     if (myRole === 'guest' && renderBalls.length){
+      // Predicción local: en vez de solo interpolar hacia la última posición
+      // recibida (que siempre va un paso atrás del tick de red), cada bola en
+      // movimiento se integra acá mismo con la misma fórmula de fricción que
+      // usa el host, y se corrige suavemente contra el último dato real cada
+      // vez que llega un paquete nuevo. Se siente más fluido y responde al
+      // instante en vez de esperar ~42ms al próximo 'tick'.
       for (var i = 0; i < renderBalls.length; i++){
-        var rb = renderBalls[i], tgt = findTarget(i);
-        if (!tgt) continue;
-        rb.pocketed = !!tgt[3];
-        rb.x += (tgt[1] - rb.x) * 0.35;
-        rb.y += (tgt[2] - rb.y) * 0.35;
+        var rb = renderBalls[i];
+        if (rb.pocketed || !rb.hasTarget) continue;
+        var sp = Math.hypot(rb.vx, rb.vy);
+        if (sp > 0){
+          var drop = FRICTION_DECEL * dt;
+          var ns = Math.max(0, sp - drop);
+          if (ns < MIN_SPEED){ rb.vx = 0; rb.vy = 0; }
+          else { var sc = ns / sp; rb.vx *= sc; rb.vy *= sc; }
+        }
+        rb.x += rb.vx * dt;
+        rb.y += rb.vy * dt;
+        rb.x += (rb.targetX - rb.x) * 0.06;
+        rb.y += (rb.targetY - rb.y) * 0.06;
       }
     }
     if (shootAnim.active){
@@ -1117,13 +1292,8 @@
       if (shootAnim.t >= 1) { shootAnim.t = 1; shootAnim.active = false; }
     }
     if (!screens.game.hidden) render();
-    requestAnimationFrame(raf);
+    if (loopActive) requestAnimationFrame(raf);
   }
-  function findTarget(idx){
-    for (var i = 0; i < remoteTarget.length; i++) if (remoteTarget[i][0] === idx) return remoteTarget[i];
-    return null;
-  }
-  requestAnimationFrame(raf);
 
   /* ================================ INPUT ====================================== */
   function canvasToTable(clientX, clientY){
@@ -1255,6 +1425,7 @@
     toastEl.classList.remove('show');
     requestAnimationFrame(resizeCanvas);
     updateHud();
+    startLoop();
   }
 
   var toastTimer = null;
@@ -1271,8 +1442,8 @@
 
   function isPocketed(id){
     if (myRole === 'host') return balls[id].pocketed;
-    var t = findTarget(id);
-    return t ? !!t[3] : false;
+    var rb = renderBalls[id];
+    return rb ? rb.pocketed : false;
   }
 
   function remainingCount(type){
