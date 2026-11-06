@@ -1,0 +1,985 @@
+<title>Billar 8 Ball Online</title>
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+/* layout: lobby overlay over a centered 2:1 canvas table; HUD strip above, controls strip below */
+:root{
+  --bg:#0a0e13;
+  --felt:#1c6b42;
+  --felt-dark:#124a2d;
+  --wood:#5a3a22;
+  --wood-dark:#33200f;
+  --wood-light:#7a512f;
+  --surface:#121922;
+  --surface-2:#1a2330;
+  --line:#2a3645;
+  --accent:#e8b23d;
+  --accent-2:#4fc3e0;
+  --text:#eef3f7;
+  --text-dim:#8b9aa8;
+  --danger:#e05454;
+  --win:#3ddc8a;
+  color-scheme: dark;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{height:100%;}
+body{
+  margin:0;
+  background:radial-gradient(ellipse at 50% -10%, #142230 0%, var(--bg) 60%);
+  color:var(--text);
+  font-family:'Inter',system-ui,sans-serif;
+  overflow:hidden;
+  touch-action:none;
+}
+h1,h2,h3,.display{font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:.02em;}
+.tabular{font-variant-numeric:tabular-nums;}
+
+#app{position:fixed;inset:0;display:flex;flex-direction:column;}
+
+/* ---------- Lobby ---------- */
+#lobby{
+  position:fixed;inset:0;z-index:40;
+  display:flex;align-items:center;justify-content:center;
+  padding:24px 16px;
+  background:
+    radial-gradient(circle at 20% 15%, rgba(79,195,224,.08), transparent 40%),
+    radial-gradient(circle at 85% 85%, rgba(232,178,61,.08), transparent 45%),
+    var(--bg);
+  overflow-y:auto;
+}
+.lobby-card{
+  width:100%;max-width:400px;
+  background:linear-gradient(180deg,var(--surface-2),var(--surface));
+  border:1px solid var(--line);
+  border-radius:18px;
+  padding:28px 24px 24px;
+  box-shadow:0 20px 60px rgba(0,0,0,.5);
+}
+.lobby-logo{display:flex;align-items:center;gap:12px;margin-bottom:4px;}
+.lobby-logo .ball8{
+  width:40px;height:40px;border-radius:50%;flex:none;
+  background:radial-gradient(circle at 32% 28%, #3a3a3a, #0a0a0a 70%);
+  position:relative;box-shadow:inset 0 -4px 8px rgba(0,0,0,.6), 0 2px 4px rgba(0,0,0,.4);
+}
+.lobby-logo .ball8::after{
+  content:"8";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-family:'Rajdhani',sans-serif;font-weight:700;color:#fff;font-size:18px;
+  background:radial-gradient(circle, #fff 38%, transparent 40%);
+  -webkit-background-clip:text;background-clip:text;
+  text-shadow:0 0 0 #fff;
+}
+.lobby-logo h1{font-size:22px;margin:0;}
+.lobby-sub{color:var(--text-dim);font-size:13px;margin:4px 0 20px;line-height:1.5;}
+
+.seg{display:flex;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:3px;margin-bottom:18px;}
+.seg button{
+  flex:1;border:none;background:transparent;color:var(--text-dim);
+  font-family:'Rajdhani',sans-serif;font-weight:600;font-size:14px;letter-spacing:.03em;
+  padding:9px 0;border-radius:8px;cursor:pointer;transition:.15s;
+}
+.seg button.active{background:var(--accent);color:#1a1200;}
+
+.panel{display:none;flex-direction:column;gap:12px;}
+.panel.active{display:flex;}
+
+.btn{
+  border:none;border-radius:10px;padding:13px 16px;font-family:'Rajdhani',sans-serif;
+  font-weight:700;font-size:15px;letter-spacing:.03em;cursor:pointer;color:#1a1200;
+  background:linear-gradient(180deg,#f3cc62,var(--accent));
+  box-shadow:0 4px 0 #9a7418, 0 6px 14px rgba(0,0,0,.35);
+  transition:transform .08s;
+}
+.btn:active{transform:translateY(3px);box-shadow:0 1px 0 #9a7418;}
+.btn.secondary{background:linear-gradient(180deg,#2a3645,#1a2330);color:var(--text);box-shadow:0 4px 0 #0e141c, 0 6px 14px rgba(0,0,0,.35);}
+.btn:disabled{opacity:.45;cursor:default;box-shadow:none;transform:none;}
+
+input.code-input{
+  width:100%;background:var(--bg);border:1px solid var(--line);border-radius:10px;
+  color:var(--text);font-family:'Rajdhani',sans-serif;font-size:22px;font-weight:700;
+  letter-spacing:.18em;text-align:center;text-transform:uppercase;padding:13px 10px;
+}
+input.code-input:focus{outline:2px solid var(--accent-2);}
+label.field-label{font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em;}
+
+.room-share{
+  background:var(--bg);border:1px dashed var(--line);border-radius:12px;
+  padding:16px;text-align:center;display:flex;flex-direction:column;gap:10px;
+}
+.room-code-big{font-family:'Rajdhani',sans-serif;font-size:34px;font-weight:700;letter-spacing:.2em;color:var(--accent);}
+.row2{display:flex;gap:8px;}
+.row2 .btn{flex:1;font-size:13px;padding:10px;}
+.waiting-line{display:flex;align-items:center;justify-content:center;gap:8px;color:var(--text-dim);font-size:13px;}
+.spinner{width:14px;height:14px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--accent-2);animation:spin 0.8s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+.lobby-error{color:var(--danger);font-size:13px;min-height:16px;text-align:center;}
+
+/* ---------- HUD ---------- */
+#hud{
+  flex:none;z-index:10;
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:max(10px,env(safe-area-inset-top,0px)) 16px 8px;
+  background:linear-gradient(180deg,#0d141c,rgba(13,20,28,0));
+}
+.conn-dot{width:9px;height:9px;border-radius:50%;background:var(--text-dim);flex:none;box-shadow:0 0 6px currentColor;}
+.conn-dot.ok{background:var(--win);color:var(--win);}
+.conn-dot.bad{background:var(--danger);color:var(--danger);}
+.conn-dot.wait{background:var(--accent);color:var(--accent);}
+#connLabel{font-size:11px;color:var(--text-dim);}
+
+.turn-pill{
+  margin-left:auto;display:flex;align-items:center;gap:6px;
+  background:var(--surface-2);border:1px solid var(--line);border-radius:999px;
+  padding:6px 14px;font-family:'Rajdhani',sans-serif;font-weight:700;font-size:13px;
+  letter-spacing:.03em;
+}
+.turn-pill.mine{border-color:var(--accent);color:var(--accent);box-shadow:0 0 14px rgba(232,178,61,.25);}
+.turn-pill.theirs{border-color:var(--line);color:var(--text-dim);}
+
+.players-row{display:flex;gap:8px;width:100%;}
+.p-chip{
+  flex:1;display:flex;align-items:center;gap:8px;background:var(--surface-2);
+  border:1px solid var(--line);border-radius:10px;padding:7px 10px;min-width:0;
+}
+.p-chip.active{border-color:var(--accent-2);}
+.p-swatch{width:16px;height:16px;border-radius:50%;flex:none;background:var(--line);border:2px solid rgba(255,255,255,.15);}
+.p-chip .p-info{min-width:0;overflow:hidden;}
+.p-chip .p-name{font-size:11px;color:var(--text-dim);white-space:nowrap;}
+.p-chip .p-type{font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:700;white-space:nowrap;}
+.p-chip .p-count{margin-left:auto;font-family:'Rajdhani',sans-serif;font-weight:700;font-size:15px;color:var(--text);flex:none;}
+
+/* ---------- Table area ---------- */
+#tableWrap{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;position:relative;padding:4px 8px;}
+#table{touch-action:none;border-radius:6px;box-shadow:0 10px 40px rgba(0,0,0,.6);}
+
+#toast{
+  position:absolute;top:8px;left:50%;transform:translate(-50%,-140%);
+  background:rgba(10,14,19,.92);border:1px solid var(--line);border-radius:10px;
+  padding:9px 18px;font-family:'Rajdhani',sans-serif;font-weight:700;font-size:14px;
+  letter-spacing:.02em;white-space:nowrap;transition:transform .25s ease, opacity .25s ease;
+  opacity:0;pointer-events:none;z-index:20;
+}
+#toast.show{transform:translate(-50%,0);opacity:1;}
+#toast.foul{color:var(--danger);border-color:var(--danger);}
+#toast.win{color:var(--win);border-color:var(--win);}
+
+/* ---------- Controls ---------- */
+#controls{
+  flex:none;z-index:10;display:flex;align-items:center;gap:14px;
+  padding:10px 16px max(14px,env(safe-area-inset-bottom,0px));
+  background:linear-gradient(0deg,#0d141c,rgba(13,20,28,0));
+}
+#powerBox{flex:1;display:flex;flex-direction:column;gap:4px;min-width:0;}
+#powerBox .plabel{display:flex;justify-content:space-between;font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;}
+#powerRange{
+  -webkit-appearance:none;appearance:none;width:100%;height:10px;border-radius:999px;
+  background:linear-gradient(90deg,var(--accent-2),var(--accent));outline:none;
+}
+#powerRange::-webkit-slider-thumb{
+  -webkit-appearance:none;width:26px;height:26px;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%,#fff,#cfd8df 60%,#8d99a4);
+  border:3px solid var(--surface);box-shadow:0 2px 6px rgba(0,0,0,.5);cursor:pointer;
+}
+#powerRange::-moz-range-thumb{
+  width:26px;height:26px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff,#cfd8df 60%,#8d99a4);
+  border:3px solid var(--surface);cursor:pointer;
+}
+#shootBtn{
+  flex:none;width:72px;height:72px;border-radius:50%;border:none;cursor:pointer;
+  background:radial-gradient(circle at 35% 30%, #fff5da, var(--accent) 60%, #a97b14);
+  box-shadow:0 5px 0 #9a7418, 0 8px 18px rgba(0,0,0,.4);
+  font-family:'Rajdhani',sans-serif;font-weight:700;color:#1a1200;font-size:12px;letter-spacing:.04em;
+  display:flex;align-items:center;justify-content:center;transition:transform .08s;
+}
+#shootBtn:active{transform:translateY(4px);box-shadow:0 1px 0 #9a7418;}
+#shootBtn:disabled{opacity:.35;box-shadow:none;transform:none;cursor:default;}
+
+/* ---------- Game over overlay ---------- */
+#gameOver{
+  position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;
+  background:rgba(5,8,11,.72);padding:16px;
+}
+#gameOver.show{display:flex;}
+.go-card{
+  background:linear-gradient(180deg,var(--surface-2),var(--surface));border:1px solid var(--line);
+  border-radius:18px;padding:30px 26px;text-align:center;max-width:340px;width:100%;
+  box-shadow:0 20px 60px rgba(0,0,0,.6);
+}
+.go-title{font-size:26px;margin:0 0 6px;}
+.go-title.win{color:var(--win);}
+.go-title.lose{color:var(--danger);}
+.go-reason{color:var(--text-dim);font-size:13px;margin-bottom:20px;}
+
+::-webkit-scrollbar{width:0;height:0;}
+[hidden]{display:none!important;}
+</style>
+
+<div id="app">
+
+  <div id="hud">
+    <div class="conn-dot" id="connDot"></div>
+    <div id="connLabel">Sin conectar</div>
+    <div class="turn-pill theirs" id="turnPill">—</div>
+    <div class="players-row">
+      <div class="p-chip" id="chipP1">
+        <div class="p-swatch" id="swatchP1"></div>
+        <div class="p-info">
+          <div class="p-name">Jugador 1 (anfitrión)</div>
+          <div class="p-type" id="typeP1">Sin asignar</div>
+        </div>
+        <div class="p-count tabular" id="countP1">7</div>
+      </div>
+      <div class="p-chip" id="chipP2">
+        <div class="p-swatch" id="swatchP2"></div>
+        <div class="p-info">
+          <div class="p-name">Jugador 2 (rival)</div>
+          <div class="p-type" id="typeP2">Sin asignar</div>
+        </div>
+        <div class="p-count tabular" id="countP2">7</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tableWrap">
+    <canvas id="table" width="1000" height="500"></canvas>
+    <div id="toast"></div>
+  </div>
+
+  <div id="controls">
+    <div id="powerBox">
+      <div class="plabel"><span>Potencia</span><span id="powerVal" class="tabular">55%</span></div>
+      <input type="range" id="powerRange" min="12" max="100" value="55">
+    </div>
+    <button id="shootBtn" disabled>TIRAR</button>
+  </div>
+
+</div>
+
+<div id="lobby">
+  <div class="lobby-card">
+    <div class="lobby-logo"><div class="ball8"></div><h1>8 Ball Online</h1></div>
+    <p class="lobby-sub">Billar 1 vs 1 en tiempo real, directo desde el navegador. Crea una sala y comparte el enlace con tu rival, o únete con un código.</p>
+
+    <div class="seg">
+      <button id="tabCreate" class="active">Crear sala</button>
+      <button id="tabJoin">Unirse</button>
+    </div>
+
+    <div class="panel active" id="panelCreate">
+      <button class="btn" id="btnCreateRoom">Crear sala nueva</button>
+      <div class="room-share" id="roomShare" hidden>
+        <label class="field-label">Código de sala</label>
+        <div class="room-code-big tabular" id="roomCodeBig">——————</div>
+        <div class="row2">
+          <button class="btn secondary" id="btnCopyCode">Copiar código</button>
+          <button class="btn secondary" id="btnCopyLink">Copiar enlace</button>
+        </div>
+        <div class="waiting-line"><div class="spinner"></div><span>Esperando rival…</span></div>
+      </div>
+    </div>
+
+    <div class="panel" id="panelJoin">
+      <label class="field-label">Código de la sala</label>
+      <input class="code-input" id="joinCodeInput" maxlength="5" placeholder="XXXXX" autocomplete="off" autocapitalize="characters">
+      <button class="btn" id="btnJoinRoom">Unirse a la sala</button>
+    </div>
+
+    <div class="lobby-error" id="lobbyError"></div>
+  </div>
+</div>
+
+<div id="gameOver">
+  <div class="go-card">
+    <h2 class="go-title" id="goTitle">—</h2>
+    <div class="go-reason" id="goReason"></div>
+    <button class="btn" id="btnRestart">Jugar de nuevo</button>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+/* ===================== Geometry & constants ===================== */
+const W = 1000, H = 500, RAIL = 30, BALL_R = 11.5;
+const BOUNDS = { left: RAIL, right: W-RAIL, top: RAIL, bottom: H-RAIL };
+const POCKETS = [
+  { x: RAIL*0.78, y: RAIL*0.78, r: 21 },
+  { x: W/2,        y: RAIL*0.52, r: 18 },
+  { x: W-RAIL*0.78, y: RAIL*0.78, r: 21 },
+  { x: RAIL*0.78, y: H-RAIL*0.78, r: 21 },
+  { x: W/2,        y: H-RAIL*0.52, r: 18 },
+  { x: W-RAIL*0.78, y: H-RAIL*0.78, r: 21 },
+];
+const BALL_COLORS = {
+  1:'#e8c23a', 2:'#2d63d9', 3:'#d4322c', 4:'#7b3bb0', 5:'#e8822f',
+  6:'#237a3e', 7:'#8a3b24', 9:'#e8c23a', 10:'#2d63d9', 11:'#d4322c',
+  12:'#7b3bb0', 13:'#e8822f', 14:'#237a3e', 15:'#8a3b24'
+};
+function typeOfNum(n){ if(n===0) return 'cue'; if(n===8) return 'eight'; return n<=7?'solid':'stripe'; }
+
+/* ===================== Game state ===================== */
+const G = {
+  balls: [],
+  myPlayer: 0,
+  turn: 1,
+  assign: {1:null, 2:null},
+  isSimulating: false,
+  simOwner: null,
+  connected: false,
+  gameOver: false,
+  winner: null,
+  gameOverReason: null,
+  aimAngle: Math.PI,
+  power: 55,
+  shotNumber: 0,
+  tracking: false,
+  contactMade: false,
+  firstContactNum: null,
+  pocketedBefore: [],
+  _newlyPocketed: [],
+  roomCode: null,
+  isHost: false,
+};
+
+function initRack(){
+  const balls = [];
+  balls.push({num:0, type:'cue', x:W*0.26, y:H/2, vx:0, vy:0, r:BALL_R, pocketed:false});
+  const apexX = W*0.735, apexY = H/2;
+  const rowDX = BALL_R*1.78, colDY = BALL_R*2.04;
+  const order = [1,9,2,10,8,3,4,11,5,12,13,6,14,7,15];
+  let idx = 0;
+  for(let r=0;r<5;r++){
+    for(let i=0;i<=r;i++){
+      const num = order[idx++];
+      const x = apexX + r*rowDX;
+      const y = apexY + (i - r/2)*colDY;
+      balls.push({num, type:typeOfNum(num), x, y, vx:0, vy:0, r:BALL_R, pocketed:false});
+    }
+  }
+  return balls;
+}
+
+function getCue(){ return G.balls.find(b=>b.num===0); }
+function round2(n){ return Math.round(n*100)/100; }
+function remainingCount(type){
+  if(!type) return 99;
+  return G.balls.filter(b => b.num>=1 && b.num<=15 && b.num!==8 && !b.pocketed &&
+    ((type==='solid' && b.num<=7) || (type==='stripe' && b.num>=9))).length;
+}
+function canShoot(){ return G.connected && !G.gameOver && !G.isSimulating && G.myPlayer===G.turn; }
+function isMyTurn(){ return G.myPlayer===G.turn; }
+
+/* ===================== Physics ===================== */
+function stepPhysics(){
+  const FR = 0.985;
+  for(const b of G.balls){
+    if(b.pocketed) continue;
+    const sp = Math.hypot(b.vx,b.vy);
+    if(sp>0){
+      let nsp = sp*FR;
+      if(nsp<0.035) nsp=0;
+      const sc = sp>0 ? nsp/sp : 0;
+      b.vx*=sc; b.vy*=sc;
+    }
+    b.x += b.vx;
+    b.y += b.vy;
+  }
+  for(const b of G.balls){
+    if(b.pocketed) continue;
+    for(const p of POCKETS){
+      if(Math.hypot(b.x-p.x, b.y-p.y) < p.r){
+        b.pocketed = true; b.vx=0; b.vy=0;
+        G._newlyPocketed.push(b.num);
+        break;
+      }
+    }
+  }
+  for(const b of G.balls){
+    if(b.pocketed) continue;
+    if(b.x-b.r < BOUNDS.left){ b.x=BOUNDS.left+b.r; b.vx=-b.vx*0.92; }
+    if(b.x+b.r > BOUNDS.right){ b.x=BOUNDS.right-b.r; b.vx=-b.vx*0.92; }
+    if(b.y-b.r < BOUNDS.top){ b.y=BOUNDS.top+b.r; b.vy=-b.vy*0.92; }
+    if(b.y+b.r > BOUNDS.bottom){ b.y=BOUNDS.bottom-b.r; b.vy=-b.vy*0.92; }
+  }
+  for(let i=0;i<G.balls.length;i++){
+    const a=G.balls[i]; if(a.pocketed) continue;
+    for(let j=i+1;j<G.balls.length;j++){
+      const b=G.balls[j]; if(b.pocketed) continue;
+      const dx=b.x-a.x, dy=b.y-a.y;
+      const dist=Math.hypot(dx,dy);
+      const minD=a.r+b.r;
+      if(dist<minD && dist>0.0001){
+        const nx=dx/dist, ny=dy/dist;
+        const overlap=minD-dist;
+        a.x-=nx*overlap/2; a.y-=ny*overlap/2;
+        b.x+=nx*overlap/2; b.y+=ny*overlap/2;
+        const dvx=b.vx-a.vx, dvy=b.vy-a.vy;
+        const vn=dvx*nx+dvy*ny;
+        if(vn<0){
+          const rest=0.96;
+          const imp=-(1+rest)*vn/2;
+          a.vx-=imp*nx; a.vy-=imp*ny;
+          b.vx+=imp*nx; b.vy+=imp*ny;
+          if(G.tracking && !G.contactMade){
+            if(a.num===0){ G.contactMade=true; G.firstContactNum=b.num; }
+            else if(b.num===0){ G.contactMade=true; G.firstContactNum=a.num; }
+          }
+        }
+      }
+    }
+  }
+}
+function allStopped(){
+  for(const b of G.balls){ if(!b.pocketed && Math.hypot(b.vx,b.vy)>0.02) return false; }
+  return true;
+}
+function respotCue(cue){
+  const candidates = [[W*0.25,H/2],[W*0.22,H*0.35],[W*0.22,H*0.65],[W*0.32,H/2],[W*0.18,H/2],[W*0.4,H/2]];
+  for(const [cx,cy] of candidates){
+    let ok=true;
+    for(const b of G.balls){
+      if(b===cue || b.pocketed) continue;
+      if(Math.hypot(b.x-cx,b.y-cy) < BALL_R*2.15){ ok=false; break; }
+    }
+    if(ok){ cue.x=cx; cue.y=cy; cue.vx=0; cue.vy=0; cue.pocketed=false; return; }
+  }
+  cue.x=W*0.25; cue.y=H/2; cue.vx=0; cue.vy=0; cue.pocketed=false;
+}
+
+/* ===================== Shot resolution (authoritative on shooter's side) ===================== */
+function resolveShot(){
+  const pocketedNums = [];
+  G.balls.forEach((b,i)=>{ if(b.pocketed && !G.pocketedBefore[i]) pocketedNums.push(b.num); });
+  const scratched = pocketedNums.includes(0);
+  let eightPocketed = pocketedNums.includes(8);
+  const noContact = !G.contactMade;
+  const foul = scratched || noContact;
+  const wasBreak = G.shotNumber===1;
+  const shooter = G.turn;
+  const opponent = shooter===1?2:1;
+  let newAssignShooter = G.assign[shooter];
+  let newAssignOpp = G.assign[opponent];
+  let gameEnded=false, winner=null, reasonKey=null;
+
+  if(eightPocketed && wasBreak && G.assign[shooter]===null && G.assign[opponent]===null){
+    const eight = G.balls.find(b=>b.num===8);
+    eight.pocketed=false; eight.x=W/2; eight.y=H/2; eight.vx=0; eight.vy=0;
+    pocketedNums.splice(pocketedNums.indexOf(8),1);
+    eightPocketed=false;
+  }
+
+  if(newAssignShooter===null){
+    const determiner = pocketedNums.find(n=>n>=1 && n<=15 && n!==8);
+    if(determiner!==undefined){
+      newAssignShooter = determiner<=7 ? 'solid' : 'stripe';
+      newAssignOpp = newAssignShooter==='solid' ? 'stripe' : 'solid';
+    }
+  }
+
+  if(eightPocketed){
+    gameEnded = true;
+    if(foul || newAssignShooter===null){
+      winner = opponent; reasonKey = 'eight_foul';
+    } else {
+      const remaining = remainingCount(newAssignShooter);
+      if(remaining===0){ winner = shooter; reasonKey = 'eight_win'; }
+      else { winner = opponent; reasonKey = 'eight_early'; }
+    }
+  } else {
+    if(scratched){
+      respotCue(G.balls.find(b=>b.num===0));
+    }
+    if(foul){
+      G.turn = opponent;
+    } else {
+      const pottedOwn = pocketedNums.some(n=>{
+        if(n===0 || n===8) return false;
+        if(!newAssignShooter) return true;
+        return newAssignShooter==='solid' ? n<=7 : n>=9;
+      });
+      G.turn = pottedOwn ? shooter : opponent;
+    }
+  }
+
+  G.assign[shooter] = newAssignShooter;
+  G.assign[opponent] = newAssignOpp;
+  if(gameEnded){ G.gameOver=true; G.winner=winner; G.gameOverReason=reasonKey; }
+
+  const state = {
+    balls: G.balls.map(b=>({n:b.num, x:round2(b.x), y:round2(b.y), p:b.pocketed})),
+    assign: {1:G.assign[1], 2:G.assign[2]},
+    turn: G.turn,
+    gameOver: G.gameOver,
+    winner: G.winner,
+    reasonKey: G.gameOverReason,
+    foul, scratched, shooter
+  };
+  send({type:'shotEnd', state});
+  applyResolvedState(state);
+}
+
+function applyResolvedState(state){
+  const byNum = {};
+  state.balls.forEach(sb=>{ byNum[sb.n] = sb; });
+  for(const b of G.balls){
+    const sb = byNum[b.num];
+    if(!sb) continue;
+    b.x = sb.x; b.y = sb.y; b.vx = 0; b.vy = 0; b.pocketed = sb.p;
+  }
+  G.assign[1] = state.assign[1]; G.assign[2] = state.assign[2];
+  G.turn = state.turn;
+  G.gameOver = state.gameOver;
+  G.winner = state.winner;
+  G.gameOverReason = state.reasonKey;
+  G.isSimulating = false;
+  G.simOwner = null;
+
+  if(state.foul){
+    toast(state.scratched ? 'Falta: bola blanca embocada' : 'Falta: no se tocó ninguna bola', 'foul');
+  }
+  if(G.gameOver){
+    showGameOver();
+  } else {
+    toast(isMyTurn() ? 'Tu turno' : 'Turno del rival', isMyTurn()?'win':'');
+  }
+  refreshHUD();
+  updateControlsEnabled();
+}
+
+/* ===================== Networking (PeerJS) ===================== */
+let peer = null, conn = null;
+const CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function genCode(len){
+  let s='';
+  for(let i=0;i<len;i++) s += CHARSET[Math.floor(Math.random()*CHARSET.length)];
+  return s;
+}
+function send(obj){
+  if(conn && conn.open){
+    try{ conn.send(obj); }catch(e){}
+  }
+}
+function attachConn(isHost){
+  conn.on('open', ()=>{
+    G.myPlayer = isHost ? 1 : 2;
+    G.isHost = isHost;
+    G.connected = true;
+    document.getElementById('lobby').style.display='none';
+    startMatch();
+    setConnStatus('ok','Conectado');
+  });
+  conn.on('data', onData);
+  conn.on('close', onPeerLost);
+  conn.on('error', onPeerLost);
+}
+function onPeerLost(){
+  if(!G.connected) return;
+  G.connected = false;
+  setConnStatus('bad','Rival desconectado');
+  toast('Rival desconectado', 'foul');
+  updateControlsEnabled();
+}
+function onData(msg){
+  if(!msg || !msg.type) return;
+  if(msg.type==='snapshot'){
+    if(G.gameOver) return;
+    G.isSimulating = true;
+    if(G.simOwner!=='me') G.simOwner='remote';
+    if(G.simOwner==='remote'){
+      msg.b.forEach(arr=>{
+        const [n,x,y,vx,vy,p] = arr;
+        const b = G.balls.find(bb=>bb.num===n);
+        if(b){ b.x=x; b.y=y; b.vx=vx; b.vy=vy; b.pocketed=!!p; }
+      });
+    }
+  } else if(msg.type==='shotStart'){
+    if(G.simOwner!=='me'){ G.isSimulating=true; G.simOwner='remote'; }
+  } else if(msg.type==='shotEnd'){
+    applyResolvedState(msg.state);
+  } else if(msg.type==='restart'){
+    doResetMatch(false);
+  }
+}
+function createRoom(){
+  let attempts=0;
+  function tryCreate(){
+    const code = genCode(5);
+    if(peer) { try{peer.destroy();}catch(e){} }
+    peer = new Peer('b8p-'+code, {debug:0});
+    peer.on('open', ()=>{
+      G.roomCode = code;
+      document.getElementById('roomCodeBig').textContent = code;
+      document.getElementById('roomShare').hidden = false;
+      document.getElementById('btnCreateRoom').hidden = true;
+      setConnStatus('wait','Esperando rival…');
+    });
+    peer.on('error', (err)=>{
+      if(err && err.type==='unavailable-id' && attempts<8){
+        attempts++; tryCreate(); return;
+      }
+      showLobbyError('No se pudo crear la sala. Probá de nuevo.');
+    });
+    peer.on('connection', (c)=>{
+      if(conn){ c.close(); return; }
+      conn = c;
+      attachConn(true);
+    });
+  }
+  tryCreate();
+}
+function joinRoom(codeRaw){
+  const code = (codeRaw||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
+  if(code.length<3){ showLobbyError('Ingresá un código válido.'); return; }
+  showLobbyError('');
+  setConnStatus('wait','Conectando…');
+  peer = new Peer(undefined, {debug:0});
+  peer.on('open', ()=>{
+    conn = peer.connect('b8p-'+code, {reliable:true});
+    attachConn(false);
+    setTimeout(()=>{
+      if(!G.connected) showLobbyError('No se encontró la sala. Revisá el código.');
+    }, 8000);
+  });
+  peer.on('error', ()=>{
+    showLobbyError('Error de conexión. Revisá el código e intentá de nuevo.');
+  });
+}
+
+/* ===================== Match lifecycle ===================== */
+function startMatch(){
+  G.balls = initRack();
+  G.assign = {1:null, 2:null};
+  G.turn = 1;
+  G.gameOver = false;
+  G.winner = null;
+  G.shotNumber = 0;
+  G.isSimulating = false;
+  G.simOwner = null;
+  G.aimAngle = Math.PI;
+  document.getElementById('gameOver').classList.remove('show');
+  refreshHUD();
+  updateControlsEnabled();
+  toast(isMyTurn() ? 'Comienza tu turno' : 'Turno del rival', isMyTurn()?'win':'');
+}
+function doResetMatch(broadcast){
+  startMatch();
+  if(broadcast) send({type:'restart'});
+}
+function showGameOver(){
+  const card = document.getElementById('goTitle');
+  const reason = document.getElementById('goReason');
+  const iWon = G.winner===G.myPlayer;
+  card.textContent = iWon ? '¡Ganaste!' : 'Perdiste';
+  card.className = 'go-title ' + (iWon?'win':'lose');
+  const reasons = {
+    eight_win: 'Embocaste la bola 8 después de limpiar tu grupo.',
+    eight_early: 'Se embocó la bola 8 antes de limpiar el grupo.',
+    eight_foul: 'Se embocó la bola 8 con falta.'
+  };
+  reason.textContent = reasons[G.gameOverReason] || '';
+  document.getElementById('gameOver').classList.add('show');
+}
+
+/* ===================== Shooting ===================== */
+function doShoot(){
+  if(!canShoot()) return;
+  const cue = getCue();
+  if(!cue || cue.pocketed) return;
+  const speed = 4 + (G.power/100)*15;
+  cue.vx = Math.cos(G.aimAngle)*speed;
+  cue.vy = Math.sin(G.aimAngle)*speed;
+  G.isSimulating = true;
+  G.simOwner = 'me';
+  G.tracking = true;
+  G.contactMade = false;
+  G.firstContactNum = null;
+  G._newlyPocketed = [];
+  G.pocketedBefore = G.balls.map(b=>b.pocketed);
+  G.shotNumber++;
+  send({type:'shotStart', angle:G.aimAngle, power:G.power});
+  updateControlsEnabled();
+}
+
+/* ===================== Rendering ===================== */
+const canvas = document.getElementById('table');
+const ctx = canvas.getContext('2d');
+
+function roundRect(c,x,y,w,h,r){
+  c.beginPath();
+  c.moveTo(x+r,y);
+  c.arcTo(x+w,y,x+w,y+h,r);
+  c.arcTo(x+w,y+h,x,y+h,r);
+  c.arcTo(x,y+h,x,y,r);
+  c.arcTo(x,y,x+w,y,r);
+  c.closePath();
+}
+
+function drawTable(){
+  ctx.clearRect(0,0,W,H);
+  const woodGrad = ctx.createLinearGradient(0,0,0,H);
+  woodGrad.addColorStop(0,'#7a512f'); woodGrad.addColorStop(1,'#33200f');
+  ctx.fillStyle = woodGrad;
+  roundRect(ctx,0,0,W,H,18); ctx.fill();
+
+  const feltGrad = ctx.createRadialGradient(W/2,H/2,20,W/2,H/2,W*0.75);
+  feltGrad.addColorStop(0,'#227a4c'); feltGrad.addColorStop(1,'#124a2d');
+  ctx.fillStyle = feltGrad;
+  roundRect(ctx,RAIL*0.6,RAIL*0.6,W-RAIL*1.2,H-RAIL*1.2,10); ctx.fill();
+
+  ctx.strokeStyle='rgba(0,0,0,.28)'; ctx.lineWidth=2;
+  roundRect(ctx,RAIL,RAIL,W-RAIL*2,H-RAIL*2,4); ctx.stroke();
+
+  for(const p of POCKETS){
+    const g = ctx.createRadialGradient(p.x,p.y,1,p.x,p.y,p.r);
+    g.addColorStop(0,'#000'); g.addColorStop(0.7,'#000'); g.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
+  }
+}
+
+function drawNumberDisc(num){
+  ctx.beginPath(); ctx.arc(0,0,BALL_R*0.52,0,Math.PI*2);
+  ctx.fillStyle='#f5f2ea'; ctx.fill();
+  ctx.fillStyle='#111';
+  ctx.font = 'bold ' + Math.round(BALL_R*0.62) + 'px Rajdhani, sans-serif';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(String(num), 0, 0.5);
+}
+
+function drawBall(b){
+  if(b.pocketed) return;
+  ctx.save();
+  ctx.translate(b.x, b.y);
+  const r = b.r;
+  if(b.type==='cue'){
+    const g = ctx.createRadialGradient(-r*0.3,-r*0.35,1,0,0,r*1.15);
+    g.addColorStop(0,'#ffffff'); g.addColorStop(1,'#d7dde2');
+    ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.fillStyle=g; ctx.fill();
+  } else if(b.type==='eight'){
+    const g = ctx.createRadialGradient(-r*0.3,-r*0.35,1,0,0,r*1.15);
+    g.addColorStop(0,'#3a3a3a'); g.addColorStop(1,'#060606');
+    ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.fillStyle=g; ctx.fill();
+    drawNumberDisc(8);
+  } else {
+    const col = BALL_COLORS[b.num];
+    if(b.type==='solid'){
+      const g = ctx.createRadialGradient(-r*0.3,-r*0.35,1,0,0,r*1.15);
+      g.addColorStop(0, lighten(col,0.45)); g.addColorStop(1, col);
+      ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.fillStyle=g; ctx.fill();
+    } else {
+      const g = ctx.createRadialGradient(-r*0.3,-r*0.35,1,0,0,r*1.15);
+      g.addColorStop(0,'#ffffff'); g.addColorStop(1,'#e4e1d8');
+      ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.fillStyle=g; ctx.fill();
+      ctx.save();
+      ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.clip();
+      ctx.fillStyle = col;
+      ctx.fillRect(-r, -r*0.44, r*2, r*0.88);
+      ctx.restore();
+    }
+    drawNumberDisc(b.num);
+  }
+  ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
+  ctx.lineWidth=1; ctx.strokeStyle='rgba(0,0,0,.35)'; ctx.stroke();
+  ctx.restore();
+}
+function lighten(hex, amt){
+  const n = parseInt(hex.slice(1),16);
+  let r=(n>>16)&255, g=(n>>8)&255, b=n&255;
+  r = Math.round(r + (255-r)*amt); g = Math.round(g + (255-g)*amt); b = Math.round(b + (255-b)*amt);
+  return 'rgb('+r+','+g+','+b+')';
+}
+
+function drawCueAndAim(){
+  if(!canShoot()) return;
+  const cue = getCue();
+  if(!cue || cue.pocketed) return;
+  const ang = G.aimAngle;
+  const dx = Math.cos(ang), dy = Math.sin(ang);
+
+  ctx.save();
+  ctx.setLineDash([6,6]);
+  ctx.strokeStyle='rgba(255,255,255,.5)';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.moveTo(cue.x+dx*cue.r*1.3, cue.y+dy*cue.r*1.3);
+  ctx.lineTo(cue.x+dx*260, cue.y+dy*260);
+  ctx.stroke();
+  ctx.restore();
+
+  const pullback = cue.r*2.3 + (G.power/100)*75;
+  const stickLen = 230;
+  const sx = cue.x - dx*pullback, sy = cue.y - dy*pullback;
+  const ex = sx - dx*stickLen, ey = sy - dy*stickLen;
+  ctx.save();
+  ctx.lineCap='round';
+  ctx.strokeStyle='#caa472'; ctx.lineWidth=7;
+  ctx.beginPath(); ctx.moveTo(ex,ey); ctx.lineTo(sx,sy); ctx.stroke();
+  ctx.strokeStyle='#3a2512'; ctx.lineWidth=7;
+  ctx.beginPath(); ctx.moveTo(ex,ey); ctx.lineTo(ex+dx*34, ey+dy*34); ctx.stroke();
+  ctx.restore();
+}
+
+function render(){
+  drawTable();
+  for(const b of G.balls) drawBall(b);
+  drawCueAndAim();
+}
+
+/* ===================== Input ===================== */
+let aiming=false;
+function toTableCoords(clientX, clientY){
+  const rect = canvas.getBoundingClientRect();
+  return { x:(clientX-rect.left)*(W/rect.width), y:(clientY-rect.top)*(H/rect.height) };
+}
+function updateAim(cx, cy){
+  const cue = getCue(); if(!cue) return;
+  const p = toTableCoords(cx, cy);
+  G.aimAngle = Math.atan2(p.y-cue.y, p.x-cue.x);
+}
+canvas.addEventListener('pointerdown', (e)=>{
+  if(!canShoot()) return;
+  aiming = true;
+  updateAim(e.clientX, e.clientY);
+  try{ canvas.setPointerCapture(e.pointerId); }catch(err){}
+});
+canvas.addEventListener('pointermove', (e)=>{ if(aiming) updateAim(e.clientX, e.clientY); });
+canvas.addEventListener('pointerup', ()=>{ aiming=false; });
+canvas.addEventListener('pointercancel', ()=>{ aiming=false; });
+
+const powerRange = document.getElementById('powerRange');
+const powerVal = document.getElementById('powerVal');
+powerRange.addEventListener('input', ()=>{
+  G.power = +powerRange.value;
+  powerVal.textContent = G.power + '%';
+});
+document.getElementById('shootBtn').addEventListener('click', doShoot);
+document.getElementById('btnRestart').addEventListener('click', ()=>{ doResetMatch(true); });
+
+/* ===================== HUD ===================== */
+function setConnStatus(cls, label){
+  const dot = document.getElementById('connDot');
+  dot.className = 'conn-dot ' + cls;
+  document.getElementById('connLabel').textContent = label;
+}
+function toast(msg, cls){
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'show' + (cls?(' '+cls):'');
+  clearTimeout(el._t);
+  el._t = setTimeout(()=>{ el.className=''; }, 2200);
+}
+const typeLabel = { solid:'Lisas', stripe:'Rayadas', null:'Sin asignar' };
+function refreshHUD(){
+  const turnPill = document.getElementById('turnPill');
+  turnPill.textContent = isMyTurn() ? 'Tu turno' : 'Turno del rival';
+  turnPill.className = 'turn-pill ' + (isMyTurn() ? 'mine' : 'theirs');
+
+  for(const p of [1,2]){
+    document.getElementById('typeP'+p).textContent = typeLabel[G.assign[p]];
+    document.getElementById('countP'+p).textContent = G.assign[p] ? remainingCount(G.assign[p]) : 7;
+    const sw = document.getElementById('swatchP'+p);
+    sw.style.background = G.assign[p]==='solid' ? '#e8c23a' : G.assign[p]==='stripe' ? '#fff' : 'var(--line)';
+    document.getElementById('chipP'+p).classList.toggle('active', G.turn===p);
+  }
+}
+function updateControlsEnabled(){
+  const enabled = canShoot();
+  document.getElementById('shootBtn').disabled = !enabled;
+  document.getElementById('powerRange').disabled = !enabled;
+}
+
+/* ===================== Lobby wiring ===================== */
+document.getElementById('tabCreate').addEventListener('click', ()=>{
+  document.getElementById('tabCreate').classList.add('active');
+  document.getElementById('tabJoin').classList.remove('active');
+  document.getElementById('panelCreate').classList.add('active');
+  document.getElementById('panelJoin').classList.remove('active');
+  showLobbyError('');
+});
+document.getElementById('tabJoin').addEventListener('click', ()=>{
+  document.getElementById('tabJoin').classList.add('active');
+  document.getElementById('tabCreate').classList.remove('active');
+  document.getElementById('panelJoin').classList.add('active');
+  document.getElementById('panelCreate').classList.remove('active');
+  showLobbyError('');
+});
+document.getElementById('btnCreateRoom').addEventListener('click', createRoom);
+document.getElementById('btnJoinRoom').addEventListener('click', ()=>{
+  joinRoom(document.getElementById('joinCodeInput').value);
+});
+document.getElementById('joinCodeInput').addEventListener('keydown', (e)=>{
+  if(e.key==='Enter') joinRoom(document.getElementById('joinCodeInput').value);
+});
+function shareLink(){
+  return location.origin + location.pathname + '?room=' + G.roomCode;
+}
+async function copyText(text){
+  try{ await navigator.clipboard.writeText(text); return true; }
+  catch(e){
+    try{
+      const ta=document.createElement('textarea');
+      ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+      return true;
+    }catch(e2){ return false; }
+  }
+}
+document.getElementById('btnCopyCode').addEventListener('click', async ()=>{
+  const ok = await copyText(G.roomCode);
+  document.getElementById('btnCopyCode').textContent = ok ? '¡Copiado!' : 'Código: '+G.roomCode;
+  setTimeout(()=>{ document.getElementById('btnCopyCode').textContent='Copiar código'; }, 1600);
+});
+document.getElementById('btnCopyLink').addEventListener('click', async ()=>{
+  const ok = await copyText(shareLink());
+  document.getElementById('btnCopyLink').textContent = ok ? '¡Copiado!' : 'Enlace listo';
+  setTimeout(()=>{ document.getElementById('btnCopyLink').textContent='Copiar enlace'; }, 1600);
+});
+function showLobbyError(msg){ document.getElementById('lobbyError').textContent = msg||''; }
+
+(function prefillFromURL(){
+  const params = new URLSearchParams(location.search);
+  const room = params.get('room');
+  if(room){
+    document.getElementById('joinCodeInput').value = room.toUpperCase();
+    document.getElementById('tabJoin').click();
+  }
+})();
+
+/* ===================== Canvas fit ===================== */
+function fitCanvas(){
+  const wrap = document.getElementById('tableWrap');
+  const availW = Math.max(200, wrap.clientWidth - 12);
+  const availH = Math.max(120, wrap.clientHeight - 8);
+  const scale = Math.min(availW/W, availH/H);
+  canvas.style.width = Math.round(W*scale) + 'px';
+  canvas.style.height = Math.round(H*scale) + 'px';
+}
+window.addEventListener('resize', fitCanvas);
+window.addEventListener('orientationchange', fitCanvas);
+
+/* ===================== Main loop ===================== */
+function loop(){
+  requestAnimationFrame(loop);
+  if(G.isSimulating){
+    if(G.simOwner==='me'){
+      stepPhysics();
+      send({type:'snapshot', b: G.balls.map(b=>[b.num, round2(b.x), round2(b.y), round2(b.vx), round2(b.vy), b.pocketed?1:0])});
+      if(allStopped()){
+        resolveShot();
+      }
+    }
+  }
+  render();
+}
+
+/* ===================== Init ===================== */
+G.balls = initRack();
+fitCanvas();
+refreshHUD();
+updateControlsEnabled();
+requestAnimationFrame(loop);
+
+})();
+</script>
